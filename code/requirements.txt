@@ -1,0 +1,7 @@
+torch
+torchvision
+diffusers
+opencv-python
+Pillow
+numpy
+lpips

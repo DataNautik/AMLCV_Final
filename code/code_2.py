@@ -432,7 +432,7 @@ def train_conditional_ddpm(
 # Entry point
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
-    DATA_PATH = "./owls1000/"
+    DATA_PATH = "./owlsclean/"
     fetch_images_if_missing(DATA_PATH, num_images=1000)
 
     # ── Quick smoke-test ──────────────────────────────────────────────────────

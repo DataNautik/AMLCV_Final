@@ -17,21 +17,50 @@ BLUR_KERNEL_SIZE = (7, 7)
 CANNY_LOW = 50
 CANNY_HIGH = 100
 
-def fetch_images_if_missing(image_dir, num_images):
+def fetch_images_if_missing(image_dir: str, num_images: int) -> None:
+    """
+    Downloads owl images from iNaturalist using their open API.
+    Taxon ID 4654 = Strigiformes (owls, all species).
+    """
     os.makedirs(image_dir, exist_ok=True)
-    existing_images = [f for f in os.listdir(image_dir) if f.endswith(('.png', '.jpg', '.jpeg'))]
-    
-    if len(existing_images) >= num_images:
-        return
-        
-    count = len(existing_images)
+    existing = [f for f in os.listdir(image_dir)
+                if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+    count = len(existing)
+    page  = 1
+
     while count < num_images:
-        img_path = os.path.join(image_dir, f"test_dataset_{count:04d}.jpg")
+        url = (
+            f"https://api.inaturalist.org/v1/observations"
+            f"?taxon_id=4654"          # owls
+            f"&quality_grade=research" # verified sightings only
+            f"&photos=true"
+            f"&per_page=50"
+            f"&page={page}"
+        )
         try:
-            urllib.request.urlretrieve("https://picsum.photos/256", img_path)
-            count += 1
-        except Exception:
-            time.sleep(1) 
+            with urllib.request.urlopen(url) as r:
+                data = json.loads(r.read())
+
+            for obs in data.get("results", []):
+                if count >= num_images:
+                    break
+                photos = obs.get("photos", [])
+                if not photos:
+                    continue
+                img_url = photos[0]["url"].replace("square", "medium")
+                img_path = os.path.join(image_dir, f"owl_{count:04d}.jpg")
+                try:
+                    urllib.request.urlretrieve(img_url, img_path)
+                    count += 1
+                except Exception:
+                    continue
+
+            page += 1
+            time.sleep(1)  # be polite to the API
+
+        except Exception as e:
+            print(f"API error on page {page}: {e}")
+            time.sleep(3)
 
 class OwlSketchDataset(Dataset):
     def __init__(self, image_dir, max_samples=None, transform=None):

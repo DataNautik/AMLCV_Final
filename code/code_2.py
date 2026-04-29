@@ -17,6 +17,7 @@ Key changes vs. original code
 import os
 import time
 import urllib.request
+import urllib.parse
 
 import numpy as np
 import cv2
@@ -27,6 +28,7 @@ from PIL import Image
 from torch.utils.data import Dataset, DataLoader
 import torchvision.transforms as transforms
 import torchvision.utils as vutils
+import json
 
 from diffusers import UNet2DModel, DDPMScheduler
 
@@ -99,15 +101,71 @@ def build_conditional_unet() -> UNet2DModel:
 def fetch_images_if_missing(image_dir: str, num_images: int) -> None:
     os.makedirs(image_dir, exist_ok=True)
     existing = [f for f in os.listdir(image_dir)
-                if f.endswith(('.png', '.jpg', '.jpeg'))]
+                if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
     count = len(existing)
+    page  = 1
+
     while count < num_images:
-        path = os.path.join(image_dir, f"img_{count:04d}.jpg")
+        # Fix 1: parameters must be passed as a proper query string
+        # Fix 2: taxon_id for owls is 19350 (Strigiformes on iNaturalist v1 API)
+        # Fix 3: add iconic_taxa=Aves to help filter correctly
+        params = urllib.parse.urlencode({
+            "taxon_id":     19350,
+            "quality_grade": "research",
+            "photos":        "true",
+            "per_page":      50,
+            "page":          page,
+            "order":         "desc",
+            "order_by":      "created_at",
+        })
+        url = f"https://api.inaturalist.org/v1/observations?{params}"
+
         try:
-            urllib.request.urlretrieve("https://picsum.photos/256", path)
-            count += 1
-        except Exception:
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "owl-sketch-project/1.0"}  # Fix 4: API requires a User-Agent
+            )
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
+
+            results = data.get("results", [])
+            if not results:
+                print("No more results from API.")
+                break
+
+            for obs in results:
+                if count >= num_images:
+                    break
+                photos = obs.get("photos", [])
+                if not photos:
+                    continue
+                # Replace 'square' (75px) with 'medium' (440px)
+                img_url  = photos[0]["url"].replace("square", "medium")
+                img_path = os.path.join(image_dir, f"owl_{count:04d}.jpg")
+                try:
+                    req_img = urllib.request.Request(
+                        img_url,
+                        headers={"User-Agent": "owl-sketch-project/1.0"}
+                    )
+                    with urllib.request.urlopen(req_img, timeout=15) as img_r:
+                        with open(img_path, "wb") as f:
+                            f.write(img_r.read())
+                    count += 1
+                    print(f"Downloaded {count}/{num_images}", end="\r")
+                except Exception as e:
+                    print(f"  Skipping image: {e}")
+                    continue
+
+            page += 1
             time.sleep(1)
+
+        except Exception as e:
+            print(f"API error on page {page}: {e}")
+            time.sleep(3)
+            break  # stop retrying same page infinitely
+
+    print(f"\nDone. {count} images in {image_dir}")
+
 
 
 class OwlSketchDataset(Dataset):
@@ -299,8 +357,8 @@ def train_conditional_ddpm(
     model = model.to(device)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    scaler    = torch.cuda.amp.GradScaler()        # AMP
-
+    use_amp = device.type == "cuda"
+    scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
     # ── Output dir + fixed batch for visual logging ──────────────────────────
     out_dir = f"output_images/{run_name}"
     os.makedirs(out_dir, exist_ok=True)
@@ -327,7 +385,8 @@ def train_conditional_ddpm(
 
             optimizer.zero_grad()
 
-            with torch.autocast(device_type="cuda", dtype=torch.float16):
+            # Dynamically set device_type and enable/disable AMP
+            with torch.autocast(device_type=device.type, enabled=use_amp, dtype=torch.float16 if use_amp else torch.float32):
                 loss = compute_l_simple(model, scheduler, x0_batch, y_batch, device)
 
             scaler.scale(loss).backward()

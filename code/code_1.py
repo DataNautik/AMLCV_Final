@@ -126,11 +126,19 @@ def train_experiment(run_name, data_path, max_samples, epochs, batch_size, learn
             
             optimizer.zero_grad()
             
+            # Forward pass with Automatic Mixed Precision
             with torch.autocast(device_type="cuda", dtype=torch.float16):
                 outputs = model(inputs, timestep=0).sample
                 loss = mse_loss_fn(outputs, targets)
             
+            # Backward pass
             scaler.scale(loss).backward()
+            
+            # --- FIX: Unscale and Clip Gradients to prevent NaN ---
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            
+            # Optimize and update scaler
             scaler.step(optimizer)
             scaler.update()
             
@@ -147,7 +155,8 @@ def train_experiment(run_name, data_path, max_samples, epochs, batch_size, learn
             
             if (epoch + 1) in save_epochs:
                 fixed_predictions = model(fixed_inputs, timestep=0).sample
-                comparison = torch.cat([fixed_inputs, fixed_predictions, fixed_targets], dim=3)
+
+                comparison = torch.cat([fixed_inputs, fixed_predictions.clamp(0.0, 1.0), fixed_targets], dim=3)
                 vutils.save_image(
                     comparison, 
                     f"output_images/{run_name}/epoch_{epoch+1}.png", 

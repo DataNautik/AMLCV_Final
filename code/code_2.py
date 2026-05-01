@@ -358,7 +358,12 @@ def train_conditional_ddpm(
 
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     use_amp = device.type == "cuda"
+    
+# Local Hardware:
     scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+
+# For Colab:
+#    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     # ── Output dir + fixed batch for visual logging ──────────────────────────
     out_dir = f"output_images/{run_name}"
     os.makedirs(out_dir, exist_ok=True)
@@ -433,7 +438,7 @@ def train_conditional_ddpm(
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     DATA_PATH = "./owlsclean/"
-    fetch_images_if_missing(DATA_PATH, num_images=1000)
+    #fetch_images_if_missing(DATA_PATH, num_images=1000)
 
     # ── Quick smoke-test ──────────────────────────────────────────────────────
     train_conditional_ddpm(
